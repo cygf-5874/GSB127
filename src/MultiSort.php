@@ -8,7 +8,7 @@ namespace Phpsort;
  * 多键排序。
  *
  * `$keys` 是有序映射 `键名 => 'asc'|'desc'`，数组顺序即优先级。
- * 当前的写法：从优先级最低的键开始，每个键单独 `usort` 一趟。
+ * 使用一次字典序比较完成全部键，并用原始下标保证相等行的稳定性。
  */
 final class MultiSort
 {
@@ -20,24 +20,35 @@ final class MultiSort
      */
     public static function sort(array $rows, array $keys): array
     {
+        $ordered = array_values($rows);
         $plan = [];
         foreach ($keys as $name => $dir) {
             $plan[] = [(string) $name, self::direction($dir)];
         }
 
-        for ($i = count($plan) - 1; $i >= 0; $i--) {
-            [$name, $dir] = $plan[$i];
-
-            usort($rows, static function (array $a, array $b) use ($name, $dir): int {
-                Counter::$cmp++;
-
-                $d = self::compareValues(self::valueOf($a, $name), self::valueOf($b, $name), $dir);
-
-                return $d < 0 ? -1 : 1;
-            });
+        if ($plan === []) {
+            return $ordered;
         }
 
-        return $rows;
+        $indexed = [];
+        foreach ($ordered as $index => $row) {
+            $indexed[] = [$index, $row];
+        }
+
+        usort($indexed, static function (array $a, array $b) use ($plan): int {
+            foreach ($plan as [$name, $dir]) {
+                Counter::$cmp++;
+
+                $d = self::compareValues(self::valueOf($a[1], $name), self::valueOf($b[1], $name), $dir);
+                if ($d !== 0) {
+                    return $d < 0 ? -1 : 1;
+                }
+            }
+
+            return $a[0] <=> $b[0];
+        });
+
+        return array_map(static fn (array $item): array => $item[1], $indexed);
     }
 
     /**
