@@ -8,7 +8,7 @@ namespace Phpsort;
  * 多键排序。
  *
  * `$keys` 是有序映射 `键名 => 'asc'|'desc'`，数组顺序即优先级。
- * 当前的写法：从优先级最低的键开始，每个键单独 `usort` 一趟。
+ * 一次排序完成全部键比较，所有键相等时用原始下标保证稳定。
  */
 final class MultiSort
 {
@@ -20,24 +20,42 @@ final class MultiSort
      */
     public static function sort(array $rows, array $keys): array
     {
+        if ($keys === []) {
+            return array_values($rows);
+        }
+
         $plan = [];
         foreach ($keys as $name => $dir) {
-            $plan[] = [(string) $name, self::direction($dir)];
+            $plan[] = [(string) $name, self::isDescending($dir)];
         }
 
-        for ($i = count($plan) - 1; $i >= 0; $i--) {
-            [$name, $dir] = $plan[$i];
+        $indexed = [];
+        foreach ($rows as $index => $row) {
+            $indexed[] = [$row, $index];
+        }
 
-            usort($rows, static function (array $a, array $b) use ($name, $dir): int {
+        usort($indexed, static function (array $left, array $right) use ($plan): int {
+            [$leftRow, $leftIndex] = $left;
+            [$rightRow, $rightIndex] = $right;
+
+            foreach ($plan as [$name, $descending]) {
                 Counter::$cmp++;
 
-                $d = self::compareValues(self::valueOf($a, $name), self::valueOf($b, $name), $dir);
+                $result = self::compareValues(
+                    self::valueOf($leftRow, $name),
+                    self::valueOf($rightRow, $name),
+                    $descending
+                );
 
-                return $d < 0 ? -1 : 1;
-            });
-        }
+                if ($result !== 0) {
+                    return $result;
+                }
+            }
 
-        return $rows;
+            return $leftIndex <=> $rightIndex;
+        });
+
+        return array_map(static fn (array $item): array => $item[0], $indexed);
     }
 
     /**
@@ -51,7 +69,7 @@ final class MultiSort
     /**
      * 比较两个键值：`null` 恒定在前；`int`/`float` 按数值；`string` 按字节序（`strcmp`）。
      */
-    private static function compareValues(mixed $a, mixed $b, int $dir): int
+    private static function compareValues(mixed $a, mixed $b, bool $descending): int
     {
         if ($a === null) {
             return $b === null ? 0 : -1;
@@ -67,15 +85,15 @@ final class MultiSort
             $d = $a <=> $b;
         }
 
-        if ($d !== 0 && $dir < 0) {
+        if ($d !== 0 && $descending) {
             $d = -$d;
         }
 
         return $d;
     }
 
-    private static function direction(mixed $dir): int
+    private static function isDescending(mixed $dir): bool
     {
-        return (is_string($dir) && strtolower($dir) === 'desc') ? -1 : 1;
+        return is_string($dir) && strtolower($dir) === 'desc';
     }
 }
